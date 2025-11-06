@@ -1,4 +1,6 @@
-# part_2_1_data.py
+# AER850_p2.py
+
+# --- 2.1: data loading and preprocessing ---
 import os, json, numpy as np, tensorflow as tf
 from tensorflow.keras.utils import image_dataset_from_directory
 from tensorflow.keras import layers
@@ -37,19 +39,22 @@ test_ds = image_dataset_from_directory(
 rescale = layers.Rescaling(1./255)
 augment = tf.keras.Sequential([
     layers.RandomFlip("horizontal"),
-    layers.RandomRotation(0.05),
-    layers.RandomZoom(0.15),
-    layers.RandomTranslation(0.1, 0.1),
+    layers.RandomRotation(0.02),
+    layers.RandomZoom(0.08),
+    layers.RandomTranslation(0.04, 0.04),
 ])
 
-train_ds = train_ds.map(lambda x, y: (augment(rescale(x)), y))
-valid_ds = valid_ds.map(lambda x, y: (rescale(x), y))
-test_ds  = test_ds.map(lambda x, y: (rescale(x), y))
+train_ds = train_ds.map(lambda x, y: (augment(rescale(x)), y),
+                        num_parallel_calls=tf.data.AUTOTUNE)
+valid_ds = valid_ds.map(lambda x, y: (rescale(x), y),
+                        num_parallel_calls=tf.data.AUTOTUNE)
+test_ds  = test_ds.map(lambda x, y: (rescale(x), y),
+                        num_parallel_calls=tf.data.AUTOTUNE)
 
-# performance
-train_ds = train_ds.prefetch(tf.data.AUTOTUNE)
-valid_ds = valid_ds.prefetch(tf.data.AUTOTUNE)
-test_ds  = test_ds.prefetch(tf.data.AUTOTUNE)
+# pipeline performance
+train_ds = train_ds.cache().prefetch(tf.data.AUTOTUNE)
+valid_ds = valid_ds.cache().prefetch(tf.data.AUTOTUNE)
+test_ds  = test_ds.cache().prefetch(tf.data.AUTOTUNE)
 
 # summary and class map
 def count_images(folder):
@@ -69,3 +74,72 @@ with open("models/meta/class_indices.json", "w") as f:
     json.dump(class_indices, f, indent=2)
 print('Saved class indices to models/meta/class_indices.json')
 
+# --- 2.2–2.4: Model 1 (baseline CNN), training, and plots ---
+from tensorflow.keras import models
+from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
+import matplotlib.pyplot as plt
+
+# model
+base_filters = 24
+dropout_rate = 0.5
+
+model = models.Sequential([
+    layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3)),
+
+    layers.Conv2D(base_filters, 3, padding="same", activation="relu"),
+    layers.Conv2D(base_filters, 3, padding="same", activation="relu"),
+    layers.MaxPooling2D(),
+
+    layers.Conv2D(base_filters*2, 3, padding="same", activation="relu"),
+    layers.Conv2D(base_filters*2, 3, padding="same", activation="relu"),
+    layers.MaxPooling2D(),
+
+    layers.Conv2D(base_filters*4, 3, padding="same", activation="relu"),
+    layers.Conv2D(base_filters*4, 3, padding="same", activation="relu"),
+    layers.MaxPooling2D(),
+
+    layers.Flatten(),
+    layers.Dense(128, activation="relu"),
+    layers.Dropout(dropout_rate),
+    layers.Dense(3, activation="softmax")
+])
+
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+    loss="categorical_crossentropy",
+    metrics=["accuracy"],
+    steps_per_execution=64
+)
+
+os.makedirs("models/model1", exist_ok=True)
+os.makedirs("plots", exist_ok=True)
+
+callbacks = [
+    ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6),
+    ModelCheckpoint("models/model1/best.h5", monitor="val_accuracy", save_best_only=True)
+]
+
+history = model.fit(
+    train_ds,
+    validation_data=valid_ds,
+    epochs=20,
+    callbacks=callbacks
+)
+
+# plots
+plt.figure()
+plt.plot(history.history["accuracy"], label="train_acc")
+plt.plot(history.history["val_accuracy"], label="val_acc")
+plt.xlabel("Epoch"); plt.ylabel("Accuracy"); plt.legend(); plt.title("Model 1 Accuracy")
+plt.savefig("plots/model1_acc.png", dpi=150, bbox_inches="tight")
+plt.close()
+
+plt.figure()
+plt.plot(history.history["loss"], label="train_loss")
+plt.plot(history.history["val_loss"], label="val_loss")
+plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.legend(); plt.title("Model 1 Loss")
+plt.savefig("plots/model1_loss.png", dpi=150, bbox_inches="tight")
+plt.close()
+
+print("Saved best weights to models/model1/best.h5")
+print("Saved plots to plots/model1_acc.png and plots/model1_loss.png")
