@@ -1,4 +1,4 @@
-# part_2_5_test
+# part_2_5_test.py
 import os, json, numpy as np, tensorflow as tf
 import matplotlib.pyplot as plt
 from glob import glob
