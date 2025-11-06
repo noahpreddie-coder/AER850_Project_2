@@ -1,4 +1,4 @@
-# part_2_5_test.py
+# part_2_5_test_model2.py
 import os, json, numpy as np, tensorflow as tf
 import matplotlib.pyplot as plt
 from glob import glob
@@ -18,8 +18,8 @@ with open("models/meta/class_indices.json", "r") as f:
     class_indices = json.load(f)
 idx_to_class = {v: k for k, v in class_indices.items()}
 
-# load trained model
-model = tf.keras.models.load_model("models/model1/best.h5")
+# load trained model 2
+model = tf.keras.models.load_model("models/model2/best.h5")
 
 # test dataset (for accuracy)
 test_dir = os.path.join(DATA_ROOT, "test")
@@ -33,7 +33,7 @@ loss, acc = model.evaluate(test_ds, verbose=0)
 print(f"Test accuracy: {acc:.3f} | Test loss: {loss:.3f}")
 
 # pick one test image per class and visualize predictions
-os.makedirs("outputs/model1", exist_ok=True)
+os.makedirs("outputs/model2", exist_ok=True)
 
 def preprocess(path):
     img = load_img(path, target_size=IMG_SIZE)
@@ -60,9 +60,9 @@ for path in samples:
     plt.imshow(pil_img); plt.axis("off")
     plt.title(f"Pred: {pred_label}  ({conf:.2f})")
     base = os.path.splitext(os.path.basename(path))[0]
-    out = f"outputs/model1/pred_{base}.png"
+    out = f"outputs/model2/pred_{base}.png"
     plt.savefig(out, dpi=150, bbox_inches="tight"); plt.close()
 
     print(f"{os.path.basename(path)} -> {pred_label} ({conf:.2f})")
 
-print("Saved labeled images to outputs/model1/")
+print("Saved labeled images to outputs/model2/")

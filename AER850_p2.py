@@ -1,4 +1,4 @@
-# AER850_p2.py
+# AER850_p2_model2.py  (2.1–2.4)
 
 # --- 2.1: data loading and preprocessing ---
 import os, json, numpy as np, tensorflow as tf
@@ -18,7 +18,6 @@ train_dir = os.path.join(DATA_ROOT, "train")
 valid_dir = os.path.join(DATA_ROOT, "valid")
 test_dir  = os.path.join(DATA_ROOT, "test")
 
-# datasets
 train_ds = image_dataset_from_directory(
     train_dir, labels="inferred", label_mode="categorical",
     class_names=CLASS_NAMES, image_size=IMG_SIZE, batch_size=BATCH_SIZE,
@@ -35,7 +34,6 @@ test_ds = image_dataset_from_directory(
     shuffle=False
 )
 
-# preprocessing/augmentation
 rescale = layers.Rescaling(1./255)
 augment = tf.keras.Sequential([
     layers.RandomFlip("horizontal"),
@@ -51,12 +49,10 @@ valid_ds = valid_ds.map(lambda x, y: (rescale(x), y),
 test_ds  = test_ds.map(lambda x, y: (rescale(x), y),
                         num_parallel_calls=tf.data.AUTOTUNE)
 
-# pipeline performance
 train_ds = train_ds.cache().prefetch(tf.data.AUTOTUNE)
 valid_ds = valid_ds.cache().prefetch(tf.data.AUTOTUNE)
 test_ds  = test_ds.cache().prefetch(tf.data.AUTOTUNE)
 
-# summary and class map
 def count_images(folder):
     return sum(len(files) for _, _, files in os.walk(folder))
 
@@ -69,54 +65,61 @@ print("Batch size        :", BATCH_SIZE)
 print("Classes (order)   :", CLASS_NAMES)
 
 os.makedirs("models/meta", exist_ok=True)
-class_indices = {name: i for i, name in enumerate(CLASS_NAMES)}
 with open("models/meta/class_indices.json", "w") as f:
-    json.dump(class_indices, f, indent=2)
+    json.dump({c:i for i,c in enumerate(CLASS_NAMES)}, f, indent=2)
 print('Saved class indices to models/meta/class_indices.json')
 
-# --- 2.2–2.4: Model 1 (baseline CNN), training, and plots ---
-from tensorflow.keras import models
+# --- 2.2–2.4: Model 2 (SeparableConv + BN + L2 + GAP), training, and plots ---
+from tensorflow.keras import models, regularizers
 from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau
 import matplotlib.pyplot as plt
 
-# model
-base_filters = 24
-dropout_rate = 0.5
+base_filters = 32
+dropout_rate = 0.35
+weight_decay = 1e-4
+
+def sep_block(filters):
+    return [
+        layers.SeparableConv2D(filters, 3, padding="same",
+                               activation="relu",
+                               depthwise_regularizer=regularizers.l2(weight_decay),
+                               pointwise_regularizer=regularizers.l2(weight_decay)),
+        layers.BatchNormalization(),
+        layers.SeparableConv2D(filters, 3, padding="same",
+                               activation="relu",
+                               depthwise_regularizer=regularizers.l2(weight_decay),
+                               pointwise_regularizer=regularizers.l2(weight_decay)),
+        layers.BatchNormalization(),
+    ]
 
 model = models.Sequential([
     layers.Input(shape=(IMG_SIZE[0], IMG_SIZE[1], 3)),
 
-    layers.Conv2D(base_filters, 3, padding="same", activation="relu"),
-    layers.Conv2D(base_filters, 3, padding="same", activation="relu"),
-    layers.MaxPooling2D(),
+    *sep_block(base_filters), layers.MaxPooling2D(),
+    *sep_block(base_filters*2), layers.MaxPooling2D(),
+    *sep_block(base_filters*4),
 
-    layers.Conv2D(base_filters*2, 3, padding="same", activation="relu"),
-    layers.Conv2D(base_filters*2, 3, padding="same", activation="relu"),
-    layers.MaxPooling2D(),
-
-    layers.Conv2D(base_filters*4, 3, padding="same", activation="relu"),
-    layers.Conv2D(base_filters*4, 3, padding="same", activation="relu"),
-    layers.MaxPooling2D(),
-
-    layers.Flatten(),
+    layers.GlobalAveragePooling2D(),
     layers.Dense(128, activation="relu"),
     layers.Dropout(dropout_rate),
     layers.Dense(3, activation="softmax")
 ])
 
+loss_fn = tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.05)
+
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-    loss="categorical_crossentropy",
+    optimizer=tf.keras.optimizers.Adam(learning_rate=2e-4),
+    loss=loss_fn,
     metrics=["accuracy"],
     steps_per_execution=64
 )
 
-os.makedirs("models/model1", exist_ok=True)
+os.makedirs("models/model2", exist_ok=True)
 os.makedirs("plots", exist_ok=True)
 
 callbacks = [
     ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=3, min_lr=1e-6),
-    ModelCheckpoint("models/model1/best.h5", monitor="val_accuracy", save_best_only=True)
+    ModelCheckpoint("models/model2/best.h5", monitor="val_accuracy", save_best_only=True)
 ]
 
 history = model.fit(
@@ -126,20 +129,19 @@ history = model.fit(
     callbacks=callbacks
 )
 
-# plots
 plt.figure()
 plt.plot(history.history["accuracy"], label="train_acc")
 plt.plot(history.history["val_accuracy"], label="val_acc")
-plt.xlabel("Epoch"); plt.ylabel("Accuracy"); plt.legend(); plt.title("Model 1 Accuracy")
-plt.savefig("plots/model1_acc.png", dpi=150, bbox_inches="tight")
+plt.xlabel("Epoch"); plt.ylabel("Accuracy"); plt.legend(); plt.title("Model 2 Accuracy")
+plt.savefig("plots/model2_acc.png", dpi=150, bbox_inches="tight")
 plt.close()
 
 plt.figure()
 plt.plot(history.history["loss"], label="train_loss")
 plt.plot(history.history["val_loss"], label="val_loss")
-plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.legend(); plt.title("Model 1 Loss")
-plt.savefig("plots/model1_loss.png", dpi=150, bbox_inches="tight")
+plt.xlabel("Epoch"); plt.ylabel("Loss"); plt.legend(); plt.title("Model 2 Loss")
+plt.savefig("plots/model2_loss.png", dpi=150, bbox_inches="tight")
 plt.close()
 
-print("Saved best weights to models/model1/best.h5")
-print("Saved plots to plots/model1_acc.png and plots/model1_loss.png")
+print("Saved best weights to models/model2/best.h5")
+print("Saved plots to plots/model2_acc.png and plots/model2_loss.png")
